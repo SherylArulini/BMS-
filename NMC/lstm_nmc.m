@@ -1,8 +1,7 @@
 %% LSTM MODEL FOR NMC BATTERY SOC and CAPACITY ESTIMATION
 clear; clc; close all;
 
-rng(1) % Fix randomness for fair comparison
-
+rng(42)
 %% 1. DATA LOADING
 basePath = 'C:\Matlab Projects\bms\Raw NMC';
 dataFolder = fullfile(basePath,'data');
@@ -208,12 +207,11 @@ save('LSTM_Battery_Model.mat','netLSTM')
 
 errors = SoC_true - SoC_pred;
 
-rmse_soc = sqrt(mean(errors.^2));
-mae_soc  = mean(abs(errors));
+rmse_ah = sqrt(mean((YTrue_Ah-YPred_Ah).^2));
+mae_ah  = mean(abs(YTrue_Ah-YPred_Ah));
 
-fprintf('\nAdditional Metrics (SoC)\n')
-fprintf('RMSE SoC : %.6f\n',rmse_soc)
-fprintf('MAE  SoC : %.6f\n',mae_soc)
+fprintf('RMSE Ah  : %.6f\n',rmse_ah)
+fprintf('MAE  Ah  : %.6f\n',mae_ah)
 
 % ---- Regression Scatter Plot ----
 figure
@@ -240,3 +238,4 @@ xlabel('Test Samples')
 ylabel('Error')
 title('LSTM Error vs Sample Index')
 grid on
+

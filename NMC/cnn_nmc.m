@@ -1,165 +1,187 @@
 %% CNN REGRESSION FOR NMC SOC AND CAPACITY ESTIMATION
 clear; clc; close all;
+rng(42)
 
-% --- 1. CONFIGURATION & LOADING ---
-% Update these paths to match your local machine
-basePath = 'C:\Matlab Projects\bms\Raw NMC'; 
-dataFolder = fullfile(basePath, 'data');
-metadata = readtable(fullfile(basePath, 'metadata.csv'));
+%% 1. DATA LOADING
+basePath = 'C:\Matlab Projects\bms\Raw NMC';
+dataFolder = fullfile(basePath,'data');
+metadata = readtable(fullfile(basePath,'metadata.csv'));
 
-fixedTimeSteps = 200; 
-featureNames = {'Voltage_measured', 'Current_measured', 'Temperature_measured'};
+fixedTimeSteps = 200;
+featureNames = {'Voltage_measured','Current_measured','Temperature_measured'};
 
-% Filter for discharge cycles
-dischargeMeta = metadata(strcmp(metadata.type, 'discharge'), :);
+dischargeMeta = metadata(strcmp(metadata.type,'discharge'),:);
 numSamples = height(dischargeMeta);
-X_raw = zeros(numSamples, fixedTimeSteps, 3);
-Y_raw = zeros(numSamples, 1);
 
-fprintf('Preprocessing Data (Moving Average + Interpolation)...\n');
-for i = 1:numSamples
-    filePath = fullfile(dataFolder, dischargeMeta.filename{i});
-    if exist(filePath, 'file')
+X_raw = zeros(numSamples,fixedTimeSteps,3);
+Y_raw = zeros(numSamples,1);
+
+fprintf('Preprocessing dataset...\n')
+
+for i=1:numSamples
+
+    filePath = fullfile(dataFolder,dischargeMeta.filename{i});
+
+    if exist(filePath,'file')
+
         data = readtable(filePath);
-        rawS = data{:, featureNames};
-        
-        % Noise reduction
-        rawS = movmean(rawS, 5); 
-        
-        % Resampling to fixed length (200 steps)
-        oldSteps = size(rawS, 1);
-        newSteps = linspace(1, oldSteps, fixedTimeSteps);
-        for f = 1:3
-            X_raw(i, :, f) = interp1(1:oldSteps, rawS(:, f), newSteps, 'linear');
+
+        rawS = data{:,featureNames};
+
+        % Noise filtering
+        rawS = movmean(rawS,5);
+
+        oldSteps = size(rawS,1);
+        newSteps = linspace(1,oldSteps,fixedTimeSteps);
+
+        for f=1:3
+            X_raw(i,:,f) = interp1(1:oldSteps,rawS(:,f),newSteps,'linear');
         end
+
         Y_raw(i) = dischargeMeta.Capacity(i);
+
     end
 end
 
-% --- 2. CLEANING & NORMALIZATION ---
-nanIdx = isnan(Y_raw) | any(any(isnan(X_raw), 2), 3);
-X_raw(nanIdx, :, :) = []; 
+%% 2. CLEAN DATA
+nanIdx = isnan(Y_raw) | any(any(isnan(X_raw),2),3);
+
+X_raw(nanIdx,:,:) = [];
 Y_raw(nanIdx) = [];
 
-% Feature Normalization (0 to 1)
+%% 3. NORMALIZATION
 X_norm = X_raw;
-for f = 1:3
-    fMin = min(X_norm(:,:,f), [], 'all'); 
-    fMax = max(X_norm(:,:,f), [], 'all');
-    X_norm(:,:,f) = (X_norm(:,:,f) - fMin) / (fMax - fMin);
+
+for f=1:3
+
+    fMin = min(X_norm(:,:,f),[],'all');
+    fMax = max(X_norm(:,:,f),[],'all');
+
+    X_norm(:,:,f) = (X_norm(:,:,f)-fMin)/(fMax-fMin);
+
 end
 
-% Target Normalization
-capMin = min(Y_raw); 
+capMin = min(Y_raw);
 capMax = max(Y_raw);
-Y_scaled = (Y_raw - capMin) / (capMax - capMin);
 
-% --- 3. DATA SPLITTING (80/10/10) ---
+Y_scaled = (Y_raw-capMin)/(capMax-capMin);
+
+%% 4. DATA SPLIT
 n = length(Y_raw);
+
 idx = randperm(n);
-idxTrain = idx(1 : round(0.8*n));
-idxVal   = idx(round(0.8*n)+1 : round(0.9*n));
-idxTest  = idx(round(0.9*n)+1 : end);
 
-% Convert to Cell Array format for sequenceInputLayer
-toCell = @(data) arrayfun(@(i) squeeze(data(i,:,:))', 1:size(data,1), 'UniformOutput', false)';
-XTrain = toCell(X_norm(idxTrain, :, :)); YTrain = Y_scaled(idxTrain);
-XVal   = toCell(X_norm(idxVal, :, :));   YVal   = Y_scaled(idxVal);
-XTest  = toCell(X_norm(idxTest, :, :));  YTest  = Y_scaled(idxTest);
+idxTrain = idx(1:round(0.8*n));
+idxVal   = idx(round(0.8*n)+1:round(0.9*n));
+idxTest  = idx(round(0.9*n)+1:end);
 
-% --- 4. CNN ARCHITECTURE ---
-% Optimized for 1D Battery Time-Series
-layers = [
-    sequenceInputLayer(3, 'MinLength', fixedTimeSteps, 'Name', 'input')
-    
-    convolution1dLayer(7, 64, 'Padding', 'same', 'Name', 'conv1')
-    batchNormalizationLayer('Name', 'bn1')
-    reluLayer('Name', 'relu1')
-    maxPooling1dLayer(2, 'Stride', 2, 'Name', 'pool1') % 200 -> 100
-    
-    convolution1dLayer(5, 128, 'Padding', 'same', 'Name', 'conv2')
-    batchNormalizationLayer('Name', 'bn2')
-    reluLayer('Name', 'relu2')
-    maxPooling1dLayer(2, 'Stride', 2, 'Name', 'pool2') % 100 -> 50
-    
-    convolution1dLayer(3, 256, 'Padding', 'same', 'Name', 'conv3')
-    batchNormalizationLayer('Name', 'bn3')
-    reluLayer('Name', 'relu3')
-    
-    globalAveragePooling1dLayer('Name', 'gap')
-    
-    fullyConnectedLayer(128, 'Name', 'fc1')
-    reluLayer('Name', 'relu4')
-    dropoutLayer(0.2, 'Name', 'drop')
-    fullyConnectedLayer(1, 'Name', 'fc2')
-    regressionLayer('Name', 'out')];
+toCell = @(data) arrayfun(@(i) squeeze(data(i,:,:))',1:size(data,1),'UniformOutput',false)';
 
-% --- 5. TRAINING OPTIONS ---
-options = trainingOptions('adam', ...
-    'MaxEpochs', 250, ...
-    'MiniBatchSize', 32, ...
-    'InitialLearnRate', 1e-3, ...
-    'LearnRateSchedule', 'piecewise', ...
-    'LearnRateDropFactor', 0.2, ...
-    'LearnRateDropPeriod', 100, ...
-    'L2Regularization', 0.0005, ...
-    'ValidationData', {XVal, YVal}, ...
-    'Plots', 'training-progress', ...
-    'Shuffle', 'every-epoch', ...
-    'Verbose', false);
+XTrain = toCell(X_norm(idxTrain,:,:));
+YTrain = Y_scaled(idxTrain);
 
-fprintf('Training Pure CNN Model...\n');
-net = trainNetwork(XTrain, YTrain, layers, options);
+XVal   = toCell(X_norm(idxVal,:,:));
+YVal   = Y_scaled(idxVal);
 
-% --- 6. POST-PROCESSING & METRICS ---
-YPred_norm = predict(net, XTest);
-YPred_Ah = YPred_norm * (capMax - capMin) + capMin;
+XTest  = toCell(X_norm(idxTest,:,:));
+YTest  = Y_scaled(idxTest);
+
 YTrue_Ah = Y_raw(idxTest);
 
-% SoC Calculation based on Rated Capacity
-ratedCap = max(Y_raw); 
-SoC_True = YTrue_Ah / ratedCap;
-SoC_Pred = YPred_Ah / ratedCap;
+%% 5. CNN ARCHITECTURE
+layers = [
 
-% Accuracy metric
-validIdx = SoC_True > 0.05;
-accuracy = (1 - mean(abs(SoC_True(validIdx) - SoC_Pred(validIdx)) ./ SoC_True(validIdx))) * 100;
+sequenceInputLayer(3,'MinLength',200)
 
-% --- 7. PLOTTING ---
-figure('Name', 'CNN Prediction Results', 'Color', 'w', 'Position', [100 100 800 600]);
+convolution1dLayer(7,64,'Padding','same')
+batchNormalizationLayer
+reluLayer
+maxPooling1dLayer(2,'Stride',2)
 
-subplot(2,1,1);
-plot(YTrue_Ah, 'b-o', 'MarkerSize', 4, 'LineWidth', 1); hold on;
-plot(YPred_Ah, 'r--x', 'MarkerSize', 4, 'LineWidth', 1);
-ylabel('Capacity (Ah)');
-title('NMC Capacity Estimation');
-legend('True Value', 'CNN Prediction');
-grid on;
+convolution1dLayer(5,128,'Padding','same')
+batchNormalizationLayer
+reluLayer
+maxPooling1dLayer(2,'Stride',2)
 
-subplot(2,1,2);
-plot(SoC_True, 'b', 'LineWidth', 1.5); hold on;
-plot(SoC_Pred, 'r--', 'LineWidth', 1.5);
-ylabel('SoC (0-1)');
-xlabel('Test Samples');
-title(['SoC Accuracy: ', num2str(accuracy, '%.2f'), '%']);
-legend('True SoC', 'CNN Predicted SoC');
-grid on;
+convolution1dLayer(3,256,'Padding','same')
+batchNormalizationLayer
+reluLayer
 
-fprintf('Final Test Accuracy: %.2f%%\n', accuracy);
+globalAveragePooling1dLayer
 
-%% --- 8. EXTRA ANALYSIS PLOTS (Added) ---
+fullyConnectedLayer(128)
+reluLayer
+dropoutLayer(0.2)
 
-errors = SoC_True - SoC_Pred;
-rmseVal = sqrt(mean(errors.^2));
-maeVal  = mean(abs(errors));
+fullyConnectedLayer(1)
+regressionLayer];
 
-fprintf('\nExtra Metrics:\n');
-fprintf('RMSE (SoC): %.6f\n', rmseVal);
-fprintf('MAE  (SoC): %.6f\n', maeVal);
+%% 6. TRAINING OPTIONS
+options = trainingOptions('adam',...
+'MaxEpochs',250,...
+'MiniBatchSize',32,...
+'InitialLearnRate',1e-3,...
+'LearnRateSchedule','piecewise',...
+'LearnRateDropFactor',0.2,...
+'LearnRateDropPeriod',100,...
+'L2Regularization',0.0005,...
+'ValidationData',{XVal,YVal},...
+'Shuffle','every-epoch',...
+'Plots','training-progress',...
+'Verbose',false);
 
-% ---- Regression Scatter Plot ----
-figure('Name','CNN Regression Analysis','Color','w');
-scatter(SoC_True,SoC_Pred,20,'filled')
+fprintf('Training CNN model...\n')
+
+net = trainNetwork(XTrain,YTrain,layers,options);
+
+%% 7. PREDICTION
+YPred_norm = predict(net,XTest);
+
+YPred_Ah = YPred_norm*(capMax-capMin)+capMin;
+
+%% 8. SOC CALCULATION
+ratedCap = max(Y_raw);
+
+SoC_true = YTrue_Ah/ratedCap;
+SoC_pred = YPred_Ah/ratedCap;
+
+%% 9. METRICS
+errors = SoC_true-SoC_pred;
+
+validIdx = SoC_true>0.05;
+
+accuracy = (1-mean(abs(errors(validIdx))./SoC_true(validIdx)))*100;
+
+rmse_soc = sqrt(mean(errors.^2));
+mae_soc  = mean(abs(errors));
+
+rmse_ah = sqrt(mean((YTrue_Ah-YPred_Ah).^2));
+mae_ah  = mean(abs(YTrue_Ah-YPred_Ah));
+
+R2 = 1 - sum((YTrue_Ah-YPred_Ah).^2)/sum((YTrue_Ah-mean(YTrue_Ah)).^2);
+
+fprintf('\n=========== CNN RESULTS ===========\n')
+fprintf('Accuracy  : %.2f %%\n',accuracy)
+fprintf('RMSE SoC  : %.6f\n',rmse_soc)
+fprintf('MAE  SoC  : %.6f\n',mae_soc)
+fprintf('RMSE Ah   : %.6f\n',rmse_ah)
+fprintf('MAE  Ah   : %.6f\n',mae_ah)
+fprintf('R2 Score  : %.4f\n',R2)
+
+%% 10. PLOTS
+
+figure
+plot(SoC_true,'b','LineWidth',1.5)
+hold on
+plot(SoC_pred,'r--','LineWidth',1.5)
+legend('True SoC','CNN Predicted SoC')
+title('CNN SoC Prediction')
+xlabel('Test Samples')
+ylabel('SoC')
+grid on
+
+figure
+scatter(SoC_true,SoC_pred,20,'filled')
 hold on
 plot([0 1],[0 1],'r','LineWidth',2)
 xlabel('True SoC')
@@ -167,18 +189,9 @@ ylabel('Predicted SoC')
 title('CNN Regression Scatter Plot')
 grid on
 
-% ---- Error Histogram ----
-figure('Name','CNN Error Distribution','Color','w');
+figure
 histogram(errors,30)
 xlabel('Prediction Error')
 ylabel('Frequency')
-title('CNN Error Histogram')
-grid on
-
-% ---- Error vs Sample Index ----
-figure('Name','CNN Error vs Samples','Color','w');
-plot(errors,'LineWidth',1.5)
-xlabel('Test Sample')
-ylabel('Error')
-title('CNN Prediction Error per Sample')
+title('CNN Error Distribution')
 grid on

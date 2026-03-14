@@ -146,3 +146,39 @@ legend('True SoC', 'CNN Predicted SoC');
 grid on;
 
 fprintf('Final Test Accuracy: %.2f%%\n', accuracy);
+
+%% --- 8. EXTRA ANALYSIS PLOTS (Added) ---
+
+errors = SoC_True - SoC_Pred;
+rmseVal = sqrt(mean(errors.^2));
+maeVal  = mean(abs(errors));
+
+fprintf('\nExtra Metrics:\n');
+fprintf('RMSE (SoC): %.6f\n', rmseVal);
+fprintf('MAE  (SoC): %.6f\n', maeVal);
+
+% ---- Regression Scatter Plot ----
+figure('Name','CNN Regression Analysis','Color','w');
+scatter(SoC_True,SoC_Pred,20,'filled')
+hold on
+plot([0 1],[0 1],'r','LineWidth',2)
+xlabel('True SoC')
+ylabel('Predicted SoC')
+title('CNN Regression Scatter Plot')
+grid on
+
+% ---- Error Histogram ----
+figure('Name','CNN Error Distribution','Color','w');
+histogram(errors,30)
+xlabel('Prediction Error')
+ylabel('Frequency')
+title('CNN Error Histogram')
+grid on
+
+% ---- Error vs Sample Index ----
+figure('Name','CNN Error vs Samples','Color','w');
+plot(errors,'LineWidth',1.5)
+xlabel('Test Sample')
+ylabel('Error')
+title('CNN Prediction Error per Sample')
+grid on

@@ -197,6 +197,7 @@ title(['LSTM SoC Prediction (Accuracy ',num2str(accuracy,'%.2f'),'%)'])
 
 xlabel('Test Samples')
 ylabel('State of Charge (SoC)')
+ylim([0 1])
 grid on
 
 %% 11. SAVE MODEL

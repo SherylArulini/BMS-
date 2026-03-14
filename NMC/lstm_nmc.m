@@ -203,3 +203,40 @@ grid on
 %% 11. SAVE MODEL
 
 save('LSTM_Battery_Model.mat','netLSTM')
+
+%% EXTRA ANALYSIS PLOTS (Added)
+
+errors = SoC_true - SoC_pred;
+
+rmse_soc = sqrt(mean(errors.^2));
+mae_soc  = mean(abs(errors));
+
+fprintf('\nAdditional Metrics (SoC)\n')
+fprintf('RMSE SoC : %.6f\n',rmse_soc)
+fprintf('MAE  SoC : %.6f\n',mae_soc)
+
+% ---- Regression Scatter Plot ----
+figure
+scatter(SoC_true,SoC_pred,20,'filled')
+hold on
+plot([0 1],[0 1],'r','LineWidth',2)
+xlabel('True SoC')
+ylabel('Predicted SoC')
+title('LSTM Regression Scatter Plot')
+grid on
+
+% ---- Error Histogram ----
+figure
+histogram(errors,30)
+xlabel('Prediction Error')
+ylabel('Frequency')
+title('LSTM Error Distribution')
+grid on
+
+% ---- Error vs Samples ----
+figure
+plot(errors,'LineWidth',1.5)
+xlabel('Test Samples')
+ylabel('Error')
+title('LSTM Error vs Sample Index')
+grid on
